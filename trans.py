@@ -1,110 +1,203 @@
 import tkinter as tk
 from tkinter import messagebox, ttk
+import mysql.connector
 
+# Database Connection
+conn = mysql.connector.connect(
+    host="localhost",
+    user="root",
+    password="root",
+    database="ArtPhotographyHub"
+)
+cursor = conn.cursor()
+
+# Create Tables
+cursor.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        address TEXT NOT NULL
+    )
+""")
+
+cursor.execute("""
+    CREATE TABLE IF NOT EXISTS artworks (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        title VARCHAR(255) NOT NULL,
+        category VARCHAR(255) NOT NULL,
+        price INT NOT NULL,
+        artist_id INT,
+        FOREIGN KEY (artist_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+""")
+conn.commit()
+
+# Functions
 def submit_form():
     name = entry_name.get()
     address = entry_address.get()
     category = category_var.get()
-    payment = payment_var.get()
     artwork = entry_artwork.get()
-    if name and address and category and artwork:
-        messagebox.showinfo("Success", f"{name} has successfully uploaded {artwork} under {category} category.")
+    price = entry_price.get()
+
+    if not category:
+        messagebox.showerror("Error", "Please select a category!")
+        return
+    
+    if name and address and artwork and price.isdigit():
+        cursor.execute("SELECT id FROM users WHERE name=%s AND address=%s", (name, address))
+        user = cursor.fetchone()
+        
+        if not user:
+            cursor.execute("INSERT INTO users (name, address) VALUES (%s, %s)", (name, address))
+            conn.commit()
+            cursor.execute("SELECT id FROM users WHERE name=%s AND address=%s", (name, address))
+            user = cursor.fetchone()
+
+        user_id = user[0]
+        
+        cursor.execute("INSERT INTO artworks (title, category, price, artist_id) VALUES (%s, %s, %s, %s)", 
+                       (artwork, category, int(price), user_id))
+        conn.commit()
+
+        messagebox.showinfo("Success", f"{name} has uploaded '{artwork}' under {category} category.")
+        update_artwork_list()
     else:
-        messagebox.showerror("Error", "Please fill in all required fields!")
+        messagebox.showerror("Error", "Please fill in all fields correctly!")
 
-def make_purchase():
-    selected = artwork_listbox.get(tk.ACTIVE)
-    if selected:
-        price = artwork_prices.get(selected, "Price not available")
-        messagebox.showinfo("Purchase", f"You have purchased {selected} for ₹{price}!")
+def update_artwork_list():
+    for row in artwork_tree.get_children():
+        artwork_tree.delete(row)
+    
+    cursor.execute("""
+        SELECT users.name, users.address, artworks.title, artworks.category, artworks.price 
+        FROM users 
+        JOIN artworks ON users.id = artworks.artist_id
+    """)
+    artworks = cursor.fetchall()
+
+    for artwork in artworks:
+        artwork_tree.insert("", tk.END, values=artwork)
+
+    calculate_total_value()
+
+def delete_artwork():
+    selected_item = artwork_tree.selection()
+    if selected_item:
+        item = artwork_tree.item(selected_item, 'values')
+        artwork_title = item[2]
+        
+        cursor.execute("DELETE FROM artworks WHERE title=%s", (artwork_title,))
+        conn.commit()
+
+        messagebox.showinfo("Deleted", f"'{artwork_title}' has been removed.")
+        update_artwork_list()
     else:
-        messagebox.showerror("Error", "Please select an artwork to purchase!")
+        messagebox.showerror("Error", "Please select an artwork to delete!")
 
-def finish_application():
-    messagebox.showinfo("Finish", "Thank you for using Masterpiece Mart: Art & Photography Store!")
-    root.quit()
+def update_artwork():
+    selected_item = artwork_tree.selection()
+    new_price = entry_price.get()
+    
+    if selected_item and new_price.isdigit():
+        item = artwork_tree.item(selected_item, 'values')
+        artwork_title = item[2]
+        
+        cursor.execute("UPDATE artworks SET price=%s WHERE title=%s", (int(new_price), artwork_title))
+        conn.commit()
 
-# Main window
+        messagebox.showinfo("Updated", f"Price of '{artwork_title}' updated to ₹{new_price}.")
+        update_artwork_list()
+    else:
+        messagebox.showerror("Error", "Please select an artwork and enter a valid price!")
+
+def calculate_total_value():
+    """Calculates the total price of all artworks."""
+    cursor.execute("SELECT SUM(price) FROM artworks")
+    total = cursor.fetchone()[0] or 0
+    total_label.config(text=f"Total Artwork Value: ₹{total}")
+
+# Main Window
 root = tk.Tk()
-root.title("Masterpiece Mart: Art & Photography Store")
-root.geometry("600x600")
-root.configure(bg="light green")
+root.title("Art & Photography Hub")
+root.state("zoomed")  # Open in full-screen mode
+root.configure(bg="#ADD8E6")  # Light blue background
 
-# Frame for structured layout
-frame = tk.Frame(root, bg="light green")
-frame.pack(pady=20)
+# Title Label
+tk.Label(root, text="Art & Photography Submission Form", font=("Arial", 18, "bold"), bg="#ADD8E6").pack(pady=10)
 
-# Helper function to create labels and entry fields
-def create_label_entry(parent, text):
-    label = tk.Label(parent, text=text, font=("Arial", 12, "bold"), bg="light green")
-    label.grid(sticky="w", padx=10, pady=5)
-    entry = tk.Entry(parent, font=("Arial", 12), width=30)
-    entry.grid(row=label.grid_info()["row"], column=1, padx=10, pady=5)
-    return entry
+# Input Fields in Table Format (Inside Box)
+input_frame = tk.LabelFrame(root, text="Enter Artwork Details", font=("Arial", 12, "bold"), bg="#ffffff", bd=3, padx=10, pady=10)
+input_frame.pack(pady=10, padx=20, fill="both")
 
-# Name Entry
-label_name = tk.Label(frame, text="Name:", font=("Arial", 12, "bold"), bg="light green")
-label_name.grid(row=0, column=0, padx=10, pady=5, sticky="w")
-entry_name = tk.Entry(frame, font=("Arial", 12), width=30)
-entry_name.grid(row=0, column=1, padx=10, pady=5)
+tk.Label(input_frame, text="Name:", bg="#ffffff").grid(row=0, column=0, padx=5, pady=5, sticky="e")
+entry_name = tk.Entry(input_frame, bd=2, relief="solid")
+entry_name.grid(row=0, column=1, padx=5, pady=5)
 
-# Address Entry
-label_address = tk.Label(frame, text="Address:", font=("Arial", 12, "bold"), bg="light green")
-label_address.grid(row=1, column=0, padx=10, pady=5, sticky="w")
-entry_address = tk.Entry(frame, font=("Arial", 12), width=30)
-entry_address.grid(row=1, column=1, padx=10, pady=5)
+tk.Label(input_frame, text="Address:", bg="#ffffff").grid(row=1, column=0, padx=5, pady=5, sticky="e")
+entry_address = tk.Entry(input_frame, bd=2, relief="solid")
+entry_address.grid(row=1, column=1, padx=5, pady=5)
 
-# Category Selection
-label_category = tk.Label(frame, text="Select Category:", font=("Arial", 12, "bold"), bg="light green")
-label_category.grid(row=2, column=0, padx=10, pady=5, sticky="w")
+tk.Label(input_frame, text="Category:", bg="#ffffff").grid(row=2, column=0, padx=5, pady=5, sticky="e")
 category_var = tk.StringVar()
-category_combobox = ttk.Combobox(frame, textvariable=category_var, values=["Painting", "Photography", "Digital Art"], font=("Arial", 12))
-category_combobox.grid(row=2, column=1, padx=10, pady=5)
+category_combobox = ttk.Combobox(input_frame, textvariable=category_var, values=["Painting", "Photography", "Digital Art"])
+category_combobox.grid(row=2, column=1, padx=5, pady=5)
+category_combobox.current(0)
 
-# Artwork Entry
-label_artwork = tk.Label(frame, text="Artwork Title:", font=("Arial", 12, "bold"), bg="light green")
-label_artwork.grid(row=3, column=0, padx=10, pady=5, sticky="w")
-entry_artwork = tk.Entry(frame, font=("Arial", 12), width=30)
-entry_artwork.grid(row=3, column=1, padx=10, pady=5)
+tk.Label(input_frame, text="Artwork Title:", bg="#ffffff").grid(row=3, column=0, padx=5, pady=5, sticky="e")
+entry_artwork = tk.Entry(input_frame, bd=2, relief="solid")
+entry_artwork.grid(row=3, column=1, padx=5, pady=5)
 
-# Payment Method Selection
-label_payment = tk.Label(frame, text="Payment Method:", font=("Arial", 12, "bold"), bg="light green")
-label_payment.grid(row=4, column=0, padx=10, pady=5, sticky="w")
-payment_var = tk.StringVar()
-pay_credit = tk.Radiobutton(frame, text="Credit Card", variable=payment_var, value="Credit Card", font=("Arial", 12), bg="light green")
-pay_credit.grid(row=4, column=1, sticky="w")
-pay_paypal = tk.Radiobutton(frame, text="PayPal", variable=payment_var, value="PayPal", font=("Arial", 12), bg="light green")
-pay_paypal.grid(row=5, column=1, sticky="w")
+tk.Label(input_frame, text="Price (₹):", bg="#ffffff").grid(row=4, column=0, padx=5, pady=5, sticky="e")
+entry_price = tk.Entry(input_frame, bd=2, relief="solid")
+entry_price.grid(row=4, column=1, padx=5, pady=5)
 
-# Upload Button
-submit_button = tk.Button(frame, text="Upload Artwork", command=submit_form, font=("Arial", 12, "bold"), bg="white")
-submit_button.grid(row=6, columnspan=2, pady=10)
+# Button Frame with Hover Effect
+def on_enter(e):
+    e.widget.config(bg="#007BFF", fg="white")
 
-# Artwork List with Prices in Rupees
-label_list = tk.Label(frame, text="Available Artworks:", font=("Arial", 12, "bold"), bg="light green")
-label_list.grid(row=7, column=0, padx=10, pady=5, sticky="w")
+def on_leave(e):
+    e.widget.config(bg="#4682B4", fg="white")
 
-artwork_listbox = tk.Listbox(frame, font=("Arial", 12), width=30, height=5)
-artwork_listbox.grid(row=7, column=1, padx=10, pady=5)
+button_frame = tk.Frame(root, bg="#ADD8E6")
+button_frame.pack(pady=5)
 
-# Dictionary to store artwork names with their prices in rupees
-artwork_prices = {
-    "Sunset Painting": 5000,
-    "Street Photography": 3000,
-    "Abstract Digital Art": 7000
-}
+buttons = [
+    ("Upload Artwork", submit_form),
+    ("Delete Artwork", delete_artwork),
+    ("Update Price", update_artwork)
+]
 
-# Insert artwork names into the listbox
-for artwork in artwork_prices.keys():
-    artwork_listbox.insert(tk.END, artwork)
+for i, (text, cmd) in enumerate(buttons):
+    btn = tk.Button(button_frame, text=text, command=cmd, font=("Arial", 10, "bold"),
+                    bg="#4682B4", fg="white", padx=10, pady=5, relief="raised")
+    btn.grid(row=0, column=i, padx=5)
+    btn.bind("<Enter>", on_enter)
+    btn.bind("<Leave>", on_leave)
 
-# Purchase Button
-purchase_button = tk.Button(frame, text="Buy Artwork", command=make_purchase, font=("Arial", 12, "bold"), bg="white")
-purchase_button.grid(row=8, columnspan=2, pady=10)
+# Artwork Table
+table_frame = tk.LabelFrame(root, text="Available Artworks", font=("Arial", 12, "bold"), bg="#ffffff", bd=3, padx=10, pady=10)
+table_frame.pack(pady=10, padx=20, fill="both")
 
-# Finish Button
-finish_button = tk.Button(frame, text="Finish", command=finish_application, font=("Arial", 12, "bold"), bg="white")
-finish_button.grid(row=9, columnspan=2, pady=10)
+artwork_tree = ttk.Treeview(table_frame, columns=("Name", "Address", "Artwork", "Category", "Price"), show="headings")
+artwork_tree.heading("Name", text="Artist Name")
+artwork_tree.heading("Address", text="Address")
+artwork_tree.heading("Artwork", text="Artwork Title")
+artwork_tree.heading("Category", text="Category")
+artwork_tree.heading("Price", text="Price (₹)")
+artwork_tree.pack(expand=True, fill=tk.BOTH)
 
-# Run the application
+# Total Price Label
+total_label = tk.Label(root, text="Total Artwork Value: ₹0", font=("Arial", 12, "bold"), bg="#ADD8E6")
+total_label.pack(pady=10)
+
+# Initialize Data
+update_artwork_list()
+
+# Close Connection on Exit
+def on_closing():
+    conn.close()
+    root.destroy()
+
+root.protocol("WM_DELETE_WINDOW", on_closing)
 root.mainloop()
